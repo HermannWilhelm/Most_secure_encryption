@@ -8,11 +8,11 @@ Key:            10100011...
 
 Message 1:      0010
 
-Enc. Message 1: 1000
+Enc. Message 1: 0010 XOR 1010 =1000
 
 Message 2:          1111
 
-Enc. Message 2:     1100
+Enc. Message 2:     1111 XOR 0011 =1100
 
 
 
