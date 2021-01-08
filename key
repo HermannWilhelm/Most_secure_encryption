@@ -1,0 +1,319 @@
+#!/bin/bash
+
+# TBC: Bei der Kodierung gab es noch hier und da Fehler.
+# Nochmal alles testen.
+
+
+mode=x
+if [[ $# -eq 0 ]] ; then
+	echo "At least one argument is needed. Try key -h."
+	exit 1
+fi
+
+# textIn=1 heißt, dass er den Inputtext verschlüsseln soll. Der Text wird aus dem zweiten Nicht-Optionen-Argument gelesen, TBC oder (falls das nicht vorhanden ist) aus dem stdin
+# textIn=0 heißt, dass er den Text in der angegebenen Datei verschlüsseln soll.
+
+textIn=0
+textOut=0
+
+[[ ${1:0:1} != - ]] && 	echo "The first agrument must be an option." && exit 1
+
+
+while [[ ${1:0:1} = - ]] ; do
+	for i in $(printf "%s" $1 | sed -r 's/(.)/\1 /g' ) ; do
+		#echo $i
+		case $i in
+			-)			;;
+			g)		mode=g	;;
+			r)		mode=r	;;
+			e)		mode=e	;;
+			d)		mode=d	;;
+			h)		mode=h	;;
+			i)		textIn=1	;;
+			I)		textIn=0	;;
+			o)		textOut=1	;;
+			O)		textOut=0	;;
+			*)	echo "Invalide option $i"
+				exit 1 ;;
+		esac
+	done
+	shift
+done
+
+
+
+# Wenn man nicht im .key-Ordner rumpfuscht, sollte der Exitstatus nie 2 sein.
+
+#echo "mode:	$mode"
+#echo "textIn: 	$textIn"
+#echo "textOut:	$textOut"
+
+case "$mode" in
+	g)	# "key -g [name] [number of characters]"
+		# Erzeugt die Datei key_$2 und cnt_$2.
+		# Die erste Zeile in cnt_$2 enthält den Counter c, der angibt wie viele Zeichen schon benutzt wurden (also anfangs 0)
+		# Die zweie Zeile in cnt_$2 enthält die Gesamtanzahl der Zeichen, die ich verschlüsseln kann. Der Rücksender kann nochmal genauso viele Zeichen verschlüsseln.
+		# Da jedes zu verschlüsselnde Zeichen zwei Schlüsselzeichen braucht, hat der Schlüssel also die Länge 4k. Die zweite Hälfte des Schlüssels ist für den Rücksender.
+
+		[[ $# -ne 2 ]] && echo "Exactly two non-option arguments are needed for the option '-g'." && exit 1
+		[[ ! $1 =~ ^[a-zA-Z\-]*$ ]]  && echo "The name must only contain Ascii letters or '-'." && exit 1
+		[[ ! $2 =~ ^[0-9]{1,9}$ ]] && echo "The third argument must be an integer less than 10^10." && exit 1
+		[[ $(($2%16)) -ne 0 ]] && echo "[number of characters] must be devisible by 16." && exit 1
+
+		# Testet, ob key_$1 und cnt_$1 schon existieren.
+		keyQ=0
+		cntQ=0
+		[[ -f ~/.key/key_$1 ]] && keyQ=1
+		[[ -f ~/.key/cnt_$1 ]] && cntQ=1
+		[[ $keyQ -gt $cntQ ]] && echo "A key file with that name exitst, but no cnt file. Something went wrong." && exit 2
+		[[ $cntQ -gt $keyQ ]] && echo "A cnt file with that name exitst, but no key file. Something went wrong." && exit 2
+
+		# Falls schon ein Schlüssel zu diesem Namen existiert, frage ob dieser überschrieben werden soll (und wenn ja, soll man das mit Texteingabe 'delete' bestätigen)
+		if [[ $((keyQ*cntQ)) -eq 1 ]] ; then
+			echo "There already exists a key for the name $1. If this key should be deleted and a new one be created, type 'delete'."
+			read deleteQ
+			[[ ! $deleteQ = "delete" ]] && echo "Nothing was done. Aborted." && exit 1
+			rm ~/.key/key_$1
+			rm ~/.key/cnt_$1
+		else
+			[[ ! -d ~/.key ]] && mkdir ~/.key
+		fi
+
+
+
+		# urandom ist fragwürdig. Ich weiß aber gerade nicht, wie es besser geht.
+
+		hexdump -n $(($2*2)) -e '4/4 "%08X"' /dev/urandom > ~/.key/key_$1
+
+		echo -e "0\n$2" > ~/.key/cnt_$1
+		cp ~/.key/key_$1 .
+
+		echo "A key for $1 has been created in the folder '~/.key'. Anyone who has this key can read all messages with $1. Don't edit any files in '~/.key'."
+
+		;;
+
+	r)	# "key -r [name] [file]"
+		# Nimmt einen Schlüssel an, der durch "key -g [name] [bytes]" von jemand anderen erzeugt wurde. Syntax: "key -r file name".
+		# "name" ist der Name, der dann immer angegeben werden muss, wenn an den jenigen eine Nachricht geschrieben werden soll.
+		[[ $# -ne 2 ]] && echo "Exactly two non-option arguments are needed for the option '-r'." && exit 1
+		[[ ! -f $2 ]] && echo "The file $2 does not exist" && exit 1
+
+		[[ -f ~/.key/key_$1 ]] && echo "A key file for the name $1 already exitst. Choose a different name." && exit 1
+		[[ -f ~/.key/cnt_$1 ]] && echo "A cnt file for teh name $1 already exitst, but no key file. Something went wrong." && exit 2
+		[[ ! $1 =~ ^[a-zA-Z\-]*$ ]]  && echo "The name must only contain Ascii letters or '-'." && exit 1
+
+
+		[[ ! -d ~/.key ]] && mkdir ~/.key
+
+
+		# Der zweite Teil dieses Schlüssels muss nun zum ersten Teil werden, damit bei --encrypt und --decrypt der erste(zweite) Teil zur Ver(Ent) schlüsselung genommen werden kann.
+		# und da nicht unterschieden werden muss, wer den Schlüssel generiert hat.
+		h=$(($(wc -c < $2)/2))
+
+		cut -c $((h+1))-$((2*h)) $2 | tr -d '\n' >  ~/.key/key_$1
+		cut -c 1-$h $2            | tr -d '\n' >> ~/.key/key_$1
+
+		echo -e "0\n$((h/2))" > ~/.key/cnt_$1
+
+		# Debugging
+		#echo "Beide Hälften des Schlüssels sind $h lang. Es kann also jede Partei $((h/2)) Zeichen verschlüsseln."
+
+		echo "The key from $1 has been received and added to the folder '~/.key'. Make sure to delete the key elsewhere. Anyone who has the key can read all messages."
+
+
+		;;
+	e)	# "key -e [name] [file] {path}"
+
+		[[ $# -ne 2 && $# -ne 3 ]] && echo "Two or three non-option arguments are needed for the option '-e'." && exit 1
+
+		# Wenn das dritte Argument mitgegeben wird, nutze $3 als Pfad, anstatt ~/.key
+		if [[ -n $3 ]] ; then
+			[[ ! -d $3 ]] && echo "The path $3 is no directory. Aborted." && exit 1
+			path="$3"
+		else
+			path=~/.key
+		fi
+
+
+		[[ ! -f "$path/key_$1" ]] && echo "No key found for the name $1 in $path." && exit 1
+		[[ ! -f "$path/cnt_$1" ]] && echo "No cnt found for the name $1 in $path. Something went wrong." && exit 2
+
+		[[ ! -f $2 && $textIn -eq 0 ]] && echo "The file $2 does not exist." && exit 1
+
+
+
+		# Die folgende Zeile testet, ob nur Ascii-Zeichen in $2 stehen. Das ist nicht mehr nötig, da bei der Verschlüsselung alle nicht-ascii Zeichen rausgeschmissen werden.
+		# ! file $2 | grep -q ASCII && echo "The input file must contain only ascii text." && exit 1
+
+
+
+		# c ist der Zähler, wie viele Zeichen schon mit dem Schlüssel verschlüsselt wurden (und jedes Zeichen braucht zwei Schlüsselzeichen, also 2c Zeichen wurden schon benutzt).
+		c=$(head -1 "$path/cnt_$1" )
+		[[ ! $c =~ ^[0-9]+$ ]] && echo "The counter in $path/$cnt_$1 is not a number. Something went wrong." && exit 2
+		# k ist die Gesamtanzahl der verfügbaren Zeichen in der ersten Hälte des Schlüssels
+		k=$(tail -1 "$path/cnt_$1" )
+		[[ ! $k =~ ^[0-9]+$ ]] && echo "The second line in $path/$cnt_$1 is not a number. Something went wrong." && exit 2
+		# Falls die Outputdatei schon existiert, Fehler
+		[[ -f message_$1_$c ]] && echo "The file message_$1_$c aldeary exists. Aborted." && exit 3
+
+
+		# $text wird entweder aus dem File gelesen, oder ist direkt das zweite (non-option) Argument.
+		if [[ $textIn -eq 0 ]] ; then
+			inputText=$(cat $2)
+		else
+			inputText=$2
+		fi
+
+		# In der Nachricht wird ä durch ae, ..., Ü durch Ue und ß durch ss ersetzt. Alle übrigens nicht-ascii Zeichen werden einfach ignoriert.
+		messageText=$(printf "%s" "$inputText" | sed 's/ä/ae/g' | sed 's/ö/oe/g'  | sed 's/ü/ue/g'  | sed 's/Ä/Ae/g'  | sed 's/Ö/Oe/g'  | sed 's/Ü/Ue/g'  | sed 's/ß/ss/g' | tr -cd '\11-\176')
+
+
+		#echo "inputText: $inputText"
+		#printf "%s" "$inputText"
+		#echo $inputText
+		#echo "messageText: $messageText"
+
+
+
+		# l ist die Länge des zu verschlüsselnden Strings.
+		l=$((${#messageText}+1))
+		#Die '+1' ist für das '\n', was unten durch printf noch angehangen wird.
+
+
+		# Falls nicht mehr genug Schlüssel existiert, Fehler.
+		[[ $((c+l)) -gt $k ]] && echo "There are not enough key characters left to encrypt the given file. The remaining bits are enough to encrypt $((k-c)) characters." && exit 1
+
+
+
+
+		# Nun muss also verschlüsselt werden. Gebe also die Summe aus vom hexdump der zu verschlüsselnden Nachricht und dem benutzten Anteil des Schlüssels
+
+		number=$(printf "%0*d" 10 $c)
+		versch=$( echo $(cut -c $((2*c+1))-$((2*c+2*l)) ~/.key/key_$1 ) $( printf "%s\n" "$messageText" |  hexdump -ve '1/1 "%.2X"') | dc -e '16o16i?+p'  | tr -d '\\\n' )
+
+		if [[ $textOut -eq 0 ]] ; then
+			echo "$number$versch" > message_$1_$c
+			echo "The file message_$1_$c has been created."
+		else
+			echo "$number$versch"
+		fi
+
+
+
+
+		# count muss geupdated werden. Der erste Eintrag wird um $l erhöht.
+		echo -e "$((c+l))\n$k" > "$path/cnt_$1"
+
+
+
+
+
+		# Debugging
+		#echo "Der Counter war $c und $l Zeichen wurden verschlüsselt, der neue Counter ist also $((c+l))."
+		#echo "Der Schlüsselteil ist $(cut -c $((2*c+1))-$((2*c+2*l)) ~/.key/key_$1 )."
+		#echo "Ab dem Zeichen $((2*c+1))"
+		#echo "textIn: $textIn"
+
+
+		# ((textIn)) && printf "%s" $2 || cat $2
+
+
+		;;
+	d)	# "key -d [name] [file]" ;;
+		# Entschlüsselung nutzt immer die zweite Hälfte des Schlüssels, deswegen sind die Hälften bei Sender und Empfänder auch vertauscht.
+
+		[[ $# -ne 2 && $# -ne 3 ]] && echo "Two or three non-option arguments are needed for the option '-d'." && exit 1
+
+		# Wenn das dritte Argument mitgegeben wird, nutze $3 als Pfad, anstatt ~/.key
+		if [[ -n $3 ]] ; then
+			[[ ! -d $3 ]] && echo "The path $3 is no directory. Aborted." && exit 1
+			path="$3"
+		else
+			path=~/.key
+		fi
+
+
+		[[ ! -f "$path/key_$1" ]] && echo "No key found for the name $1." && exit 1
+		[[ ! -f "$path/cnt_$1" ]] && echo "No cnt found for the name $1. Something went wrong." && exit 2
+		[[ ! -f $2 && $textIn -eq 0 ]] && echo "The file $2 does not exist" && exit 1
+
+		k=$(tail -1 "$path/cnt_$1" )
+		[[ ! $k =~ ^[0-9]+$ ]] && echo "The second line in $path/$cnt_$1 is not a number. Something went wrong." && exit 2
+
+
+		# Die ersten 10 Zeichen der Message geben nur ab, wie viele Zeichen davor schon verschlüsselt wurden und müssen also erstmal von der Nachricht abgeschnitten werden.
+		if [[ $textIn -eq 0 ]] ; then
+			text=$(cut -c 11- $2)
+			c=$(cut -c 1-10 $2 | sed 's/0*//' )
+		else
+			text=${2:10:${#2}-10}
+			c=$( echo ${2:0:10} | sed 's/0*//' )
+		fi
+
+
+
+
+
+		[[ ! $c    =~ ^[0-9]*$    ]] && echo "The first 10 characters of the message contain non-digits, so the message has been edited." && exit 4
+		[[ ! $text =~ ^[0-9A-F]*$ ]] && echo "The message contains non-hex characters, so it has been edited." && exit 4
+
+
+		# l ist die Länge des zu entschlüsselnden Strings.
+		l=$(( ${#text}/2 ))
+
+
+
+		# Entschlüsselung
+		output=$(echo  $text $(cut -c $((2*k+2*c+1))-$((2*k+2*c+2*l)) "$path/key_$1" ) | dc -e '16o16i?-p' | tr -d '\\\n' | xxd -r -p)
+
+
+
+		if [[ $textOut -eq 0 ]] ; then
+			if [[ $textIn -eq 0 ]] ; then
+				name="$2_decrypted"
+			else
+				name="From_$1_decrypted"
+			fi
+			if [[ -f $name ]] ; then
+				a=1
+				while [[ -f "$name($a)" ]] ; do
+					a=$((a+1))
+				done
+				outputName="$name($a)"
+			else
+				outputName="$name"
+			fi
+			printf "%s" "$output" > "$outputName"
+			echo "The file $outputName has been created."
+		else
+			printf "%s\n" "$output"
+		fi
+
+
+
+		# Debugging
+		#echo "c: $c"
+		#echo "Die zu entschlüsselnde Nachricht ist $l Zeichen lang."
+		#echo "Der Schlüsselteil ist $(cut -c $((2*k+2*c+1))-$((2*k+2*c+2*l)) ~/.key/key_$1 )."$
+		#echo "Ab dem Zeichen $((2*c+1))."
+
+		;;
+
+	h)	echo -e "generate a key for [name of receiver]:			key -g [name of receiver] [number of characters]"
+		echo -e "The key is created in ~/.key. [name of receiver] is always needed as an argument if the generator of the key wants to encrypt or decrypt a message. Each user can encrypt [number of characters] with the generated key. Each character requires two key characters and the key consists of two parts, one for each user. This means that the size of the key is 4 times [number of characters].\n"
+		echo -e "receive a key from [name of generator]:			key -r [name of generator] [key file]"
+		echo -e "The key the receiver gets from the generator is by default named key_[name of receiver]. This name is the name that the generator of the key gives as an argument when he encrypts or decrypts a message for/from the receiver. The receiver of the key does not need to know or use [name of receiver] in any way. [name of generator] is chosen by the receiver of the key and the receiver always has to give this chosen name as an argument when he encrypts or decrypts a message for/from the genetator of the key. The generator of the key does not need to know or use [name of generator] in any way. 'key -r [...]' will copy [key file] to ~/.key, modify it and name it key_[name of generator]. [key file] can be deleted afterwards.\n"
+		echo -e "encrypt the [file] for [name]:		key -e [name] [file] {path}"
+		echo -e "[name] is the name you chose for the user for whom the message is. This means it is [name of receiver] if you generated the corresponding key and [name of generator] if you received the key. Umlaute and 'ß' are replaced by 'ae',..., 'Ue' and 'ss' and all other non-ascii characters are ignrored. The output file is message_[name]_[some_number] in the current folder, or text to stdout if '-o' is given.\n"
+		echo -e "decrypt the [file] from [name]:	key -d [name] [file] {path}"
+		echo -e "The explanation is analogous to '-e'.\n"
+		echo -e "Do not edit the folder '~/.key'."
+		echo -e "{path} is an optional argument. If it is given, the key and cnt file are expected to be in {path}. The default path is ~/.key."
+		echo -e "If the option '-i' is given, treat the input as text instead of using a file."
+		echo -e "If the option '-o' is given, output to stdout instead of creating a file."
+		;;
+	x)	echo "No mode given. Aborted."
+		;;
+	*)	echo "Other mode. Something went wrong" && exit 2
+		;;
+esac
