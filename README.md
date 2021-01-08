@@ -4,9 +4,13 @@ There is one encrpytion that is 100% secure (if the key is not caught), even if 
 
 Example:
 Key:            1010001101001001000101
+
 Message 1:      0010
+
 Enc. Message 1: 1000
+
 Message 2:          1111
+
 Enc. Message 2:     1100
 ...
 
