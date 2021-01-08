@@ -1,6 +1,6 @@
 # Most_secure_encryption
 
-There is one encrpytion that is 100% secure (if the key is not caught), even if the attacker has the best quantum super computer avaible. This method is also one of the simplest encrpytion methods. The keys consits of random bits, each bit of the message corresponds to exactly one bit of the key and no bit of the key is used for more than one bit of message. You send the XOR of the bit you want to encrypt and the key bit.
+There is one encrpytion that is 100% secure (if the key is not caught), even if the attacker has the best quantum super computer avaible. This method is also one of the simplest encrpytion methods. The keys consits of random bits, each bit of the message corresponds to exactly one bit of the key and no bit of the key is used for more than one bit of message. You send the XOR of the bit you want to encrypt and the key bit. Since every message bit consumes one key bit, I have implemented this only for text.
 
 Example:
 
